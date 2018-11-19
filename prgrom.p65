@@ -1,0 +1,314 @@
+; Adapted from program code for NES 101 (Michael Martin), 2001-2
+
+.alias        sprite        $200
+
+.segment zp
+.org $0000
+.space freq 1
+.space a 1	; debounce for a
+.space b 1	; debounce for b
+.space up 1 ;
+
+.space dx 1 ; horizontal movement
+.space dy 1 ; vertical movement
+.space acc 1 ; i know gravity ain't an excuse
+
+.space facing 1 ; bit 1: direction facing (0 = right, 1 = left)
+
+; If we had a normal data segment, it would have an .org $0300, so
+; that it doesn't stomp on our sprite data.
+
+; Actual program code.  We only have one PRG-ROM chip here, so the
+; origin is $C000.
+.text
+.org $C000
+
+reset:  sei
+	cld
+	; Wait two VBLANKs.
+*	lda $2002
+	bpl -
+*	lda $2002
+	bpl -
+
+	; Clear out RAM.
+        lda #$00
+        ldx #$00
+*       sta $000,x
+        sta $100,x
+        sta $200,x
+        sta $300,x
+        sta $400,x
+        sta $500,x
+        sta $600,x
+        sta $700,x
+        inx
+        bne -
+
+	; Reset the stack pointer.
+        ldx #$FF
+        txs
+
+	; Disable all graphics.
+        lda #$00
+        sta $2000
+        sta $2001
+
+	jsr init'sprites
+	jsr init'sound
+
+        lda #%10101000
+        sta $2000
+        lda #%00011110
+        sta $2001
+
+	cli
+
+	; Transfer control to the VBLANK routines.
+loop:   jmp loop
+
+init'sprites:
+        ; Clear page #2, which we'll use to hold sprite data
+        lda #$00
+        ldx #$00
+*       sta sprite, x
+        inx
+        bne -
+
+        ; initialize Sprite 0
+        lda #$E0
+        sta sprite          ; Y coordinate
+        sta sprite+4        ; Y coordinate
+
+        stx sprite+3        ; X coordinate
+		lda #$08
+        sta sprite+7        ; X coordinate
+        lda #$02
+        sta sprite+1        ; Pattern number
+        lda #$06
+        sta sprite+5        
+
+		lda #1
+		sta acc				; normal gravity
+
+load'palette:
+        lda #$3F
+        ldx #$00
+        sta $2006
+        stx $2006
+*       lda palette,x
+        sta $2007
+        inx
+        cpx #$20
+        bne -
+        rts
+
+init'sound:
+        ; initialize sound hardware
+		; only turn on square wave 1
+        lda #$05
+        sta $4015
+		; disable sweep
+        lda #$00
+        sta $4001
+	; disable frame interrupt
+	lda #$40
+	sta $4017
+        rts
+
+do'input:
+		ldx #0
+        lda #$01        ; strobe joypad
+        sta $4016
+        lda #$00
+        sta $4016
+
+        lda $4016        ; A button
+        and #1
+        beq not'a
+		eor a			 ; debounce with last known value
+		beq a'done
+		sta a
+
+		jsr play'square
+		stx dy
+		stx dx
+		lda #$E0
+		sta sprite
+		sta sprite+4
+
+		jmp a'done
+
+not'a:	stx a
+a'done:	lda $4016        ; B
+		and #1
+		beq not'b
+		eor b			 ; debounce b
+		beq b'done
+		sta b
+
+		jsr play'tri
+
+		jmp b'done
+
+not'b:	stx b 
+b'done: lda $4016        ; Select does nothing
+        lda $4016        ; Start does nothing
+        lda $4016        ; Up
+
+        and #1			 ; only on press
+        beq not'up
+		eor up
+		beq up'done
+		sta up
+
+		lda dy
+		bne up'done		 ; can't jump in midair
+		lda #$F0		 ; TODO I guess add feather in some higher memory?
+		sta dy
+
+not'up: stx up
+up'done:
+		lda $4016               ; down
+        and #1
+        beq not'dn
+
+not'dn: lda $4016				; left
+		and #1
+		beq not'le
+
+		lda #$FF	;-1
+		sta dx
+		lda facing
+		ora #$01
+		sta facing
+		jmp lr'done
+
+not'le: lda $4016				; right
+		and #1
+		beq not'lr
+
+		lda #$01
+		sta dx
+		lda facing
+		and #$FE
+		sta facing
+		jmp lr'done
+		
+not'lr: stx dx
+lr'done:
+		rts
+
+update'sprite:
+		clc
+		lda facing		; use the upper bits for animation
+		adc #2
+		sta facing
+
+		clc
+		lda sprite+3	; movement
+		adc dx
+		sta sprite+3
+		adc #8
+		sta sprite+7
+
+
+		clc
+		lda dy			; do some gravity
+		adc acc
+		sta dy
+
+		adc sprite		; adding is commutative
+		pha
+		sbc #$E0
+		bpl move'sprite
+		pla
+		jmp draw'sprite
+
+move'sprite: 
+		pla
+		lda #$E0        ; ground
+		stx dy			; turn off the vertical
+draw'sprite:
+		sta sprite
+		sta sprite+4
+
+		lda facing
+		and #1
+		bne	do'reflect	; no horizontal reflection
+
+		lda #$06
+		pha 
+		lda #$02		; todo anim
+		pha 
+
+		lda sprite+2
+		and #$BF		; all but that bit
+		sta sprite+2
+		sta sprite+6
+
+		jmp reflect'done
+		
+do'reflect:
+		lda #$02		; todo anim
+		pha 
+		lda #$06
+		pha 
+
+		lda sprite+2
+		ora #$40		; all but that bit
+		sta sprite+2
+		sta sprite+6
+		dec sprite+7	; lag compensation
+
+reflect'done:
+		pla
+		sta sprite+1
+		pla
+		sta sprite+5
+		
+
+		lda dx			; only use animated if moving
+		beq anim'done
+		lda facing
+		and #$10
+		bne anim'done
+
+		inc sprite+1
+		inc sprite+1
+		inc sprite+5
+		inc sprite+5
+anim'done:
+        lda #>sprite
+        sta $4014       ; Jam page $200-$2FF into SPR-RAM
+		rts
+
+
+play'square:
+		lda #$84		 ; decaying envelope
+		sta $4000
+		lda freq		 ; period in here
+		sta $4002
+		lda #$09		 ; length and period high
+		sta $4003
+		rts
+
+play'tri:
+		lda freq
+		sta $400A
+		lda #$09
+		sta $400B
+		lda #$1F
+		sta $4008
+		rts
+
+vblank: jsr do'input
+		jsr update'sprite
+irq:    rti
+
+palette:
+.byte $0E,$00,$0E,$19,$00,$00,$00,$00,$00,$00,$00,$00,$01,$00,$01,$21	; BG
+.byte $0E,$0F,$1A,$38,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00	; Sprite
+
+.advance $FFFA
+.word vblank, reset, irq
