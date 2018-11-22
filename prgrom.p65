@@ -4,16 +4,23 @@
 
 .segment zp
 .org $0000
+
+;$00: data 
 .space freq 1
 .space a 1	; debounce for a
 .space b 1	; debounce for b
-.space up 1 ;
+.space up 1 ; 
 
-.space dx 1 ; horizontal movement
-.space dy 1 ; vertical movement
-.space acc 1 ; i know gravity ain't an excuse
+;$04: 
+.space sx 1	;	subpixel horizontal positioning
+.space dx 1 ;	horizontal movement
+.space sy 1	;	subpixel vertical positioning
+.space dy 1 ;	vertical movement
+.space acc 1 ;	i know gravity ain't an excuse
 
-.space facing 1 ; bit 1: direction facing (0 = right, 1 = left)
+;$09: constants and clocks
+.space facing 1 ; bit 1: direction facing (0 = right, 1 = left), upper: animation count
+.space subpx 1  ; constant 8
 
 ; If we had a normal data segment, it would have an .org $0300, so
 ; that it doesn't stomp on our sprite data.
@@ -67,6 +74,18 @@ reset:  sei
 	; Transfer control to the VBLANK routines.
 loop:   jmp loop
 
+asr'four:	; arithmetic shift right
+		lsr
+		lsr
+		lsr
+		lsr
+		bit subpx
+		beq not'neg
+		clc
+		adc	#$F0
+not'neg:
+		rts
+
 init'sprites:
         ; Clear page #2, which we'll use to hold sprite data
         lda #$00
@@ -90,6 +109,8 @@ init'sprites:
 
 		lda #1
 		sta acc				; normal gravity
+		lda #8
+		sta subpx
 
 load'palette:
         lda #$3F
@@ -120,8 +141,7 @@ do'input:
 		ldx #0
         lda #$01        ; strobe joypad
         sta $4016
-        lda #$00
-        sta $4016
+        stx $4016
 
         lda $4016        ; A button
         and #1
@@ -164,7 +184,7 @@ b'done: lda $4016        ; Select does nothing
 
 		lda dy
 		bne up'done		 ; can't jump in midair
-		lda #$F0		 ; TODO I guess add feather in some higher memory?
+		lda #$F3		 ; TODO I guess add feather in some higher memory?
 		sta dy
 
 not'up: stx up
@@ -177,7 +197,7 @@ not'dn: lda $4016				; left
 		and #1
 		beq not'le
 
-		lda #$FF	;-1
+		lda #$E8
 		sta dx
 		lda facing
 		ora #$01
@@ -188,7 +208,7 @@ not'le: lda $4016				; right
 		and #1
 		beq not'lr
 
-		lda #$01
+		lda #$18
 		sta dx
 		lda facing
 		and #$FE
@@ -206,8 +226,19 @@ update'sprite:
 		sta facing
 
 		clc
-		lda sprite+3	; movement
-		adc dx
+		lda sx
+		adc dx			; add dx in subpixels
+		pha
+		bpl adj'sub
+		eor #$FF		; negate
+		adc #01
+adj'sub:
+		and #15
+		sta sx
+		pla
+		jsr asr'four
+		clc
+		adc sprite+3
 		sta sprite+3
 		adc #8
 		sta sprite+7
@@ -239,7 +270,7 @@ draw'sprite:
 
 		lda #$06
 		pha 
-		lda #$02		; todo anim
+		lda #$02
 		pha 
 
 		lda sprite+2
@@ -250,7 +281,7 @@ draw'sprite:
 		jmp reflect'done
 		
 do'reflect:
-		lda #$02		; todo anim
+		lda #$02
 		pha 
 		lda #$06
 		pha 
