@@ -1,6 +1,8 @@
 ; Adapted from program code for NES 101 (Michael Martin), 2001-2
 
-.alias        sprite        $200
+.alias        sprite	$200
+.alias        jump      $F3
+.alias        ground    $E0
 
 .segment zp
 .org $0000
@@ -74,18 +76,6 @@ reset:  sei
 	; Transfer control to the VBLANK routines.
 loop:   jmp loop
 
-asr'four:	; arithmetic shift right
-		lsr
-		lsr
-		lsr
-		lsr
-		bit subpx
-		beq not'neg
-		clc
-		adc	#$F0
-not'neg:
-		rts
-
 init'sprites:
         ; Clear page #2, which we'll use to hold sprite data
         lda #$00
@@ -95,7 +85,7 @@ init'sprites:
         bne -
 
         ; initialize Sprite 0
-        lda #$E0
+        lda #ground
         sta sprite          ; Y coordinate
         sta sprite+4        ; Y coordinate
 
@@ -153,7 +143,7 @@ do'input:
 		jsr play'square
 		stx dy
 		stx dx
-		lda #$E0
+		lda #ground
 		sta sprite
 		sta sprite+4
 
@@ -184,7 +174,7 @@ b'done: lda $4016        ; Select does nothing
 
 		lda dy
 		bne up'done		 ; can't jump in midair
-		lda #$F3		 ; TODO I guess add feather in some higher memory?
+		lda #jump		 ; TODO I guess add feather in some higher memory?
 		sta dy
 
 not'up: stx up
@@ -219,30 +209,48 @@ not'lr: stx dx
 lr'done:
 		rts
 
+;subroutine called with the following:
+;	X contains 0-255, pointing to data on the zero page
+;	A contains the value you want to add in subpixels, which are 8 bits, 
+;		with a fixed point at the fourth bit
+;	returns (in A) offset to 'higher' bits (like those stored in a sprite)
+subpixel'manage:		
+		clc
+		adc $00,X
+		pha
+		bpl lower'bits
+		eor #$FF		; negate
+		adc #1
+lower'bits:
+		and #$0F
+		sta $00,X
+		pla
+
+		lsr				; arithmetic shift right
+		lsr
+		lsr
+		lsr
+		bit subpx
+		beq not'neg
+		clc
+		adc	#$F0
+not'neg:
+		clc
+		rts
+
 update'sprite:
 		clc
 		lda facing		; use the upper bits for animation
 		adc #2
 		sta facing
 
-		clc
-		lda sx
-		adc dx			; add dx in subpixels
-		pha
-		bpl adj'sub
-		eor #$FF		; negate
-		adc #01
-adj'sub:
-		and #15
-		sta sx
-		pla
-		jsr asr'four
-		clc
+		lda dx
+		ldx #sx
+		jsr subpixel'manage
 		adc sprite+3
 		sta sprite+3
 		adc #8
 		sta sprite+7
-
 
 		clc
 		lda dy			; do some gravity
@@ -251,15 +259,15 @@ adj'sub:
 
 		adc sprite		; adding is commutative
 		pha
-		sbc #$E0
+		sbc #ground
 		bpl move'sprite
 		pla
 		jmp draw'sprite
-
 move'sprite: 
 		pla
-		lda #$E0        ; ground
-		stx dy			; turn off the vertical
+		lda #ground
+		ldx #0
+		stx dy			; turn off the vertical movement
 draw'sprite:
 		sta sprite
 		sta sprite+4
