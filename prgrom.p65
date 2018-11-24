@@ -1,26 +1,39 @@
 ; Adapted from program code for NES 101 (Michael Martin), 2001-2
 
 .alias        sprite	$200
-.alias        jump      $F3
+.alias        jump      $C8
 .alias        ground    $E0
+.alias		  maxjump	$40
+
+.alias		  movleft   $E8
+.alias		  movright  $18
+.alias		  slowleft 	$F4
+.alias		  slowright $0C
+.alias		  fastleft	$E0
+.alias		  fastright $20
 
 .segment zp
 .org $0000
 
 ;$00: data 
 .space freq 1
+.space currbuttons 1
+.space prevbuttons 1
+
 .space a 1	; debounce for a
 .space b 1	; debounce for b
 .space up 1 ; 
+.space holdlr 1;
 
-;$04: 
+;$05: 
 .space sx 1	;	subpixel horizontal positioning
 .space dx 1 ;	horizontal movement
 .space sy 1	;	subpixel vertical positioning
 .space dy 1 ;	vertical movement
 .space acc 1 ;	i know gravity ain't an excuse
+.space jumplock 1
 
-;$09: constants and clocks
+;$0B: constants and clocks
 .space facing 1 ; bit 1: direction facing (0 = right, 1 = left), upper: animation count
 .space subpx 1  ; constant 8
 
@@ -97,7 +110,7 @@ init'sprites:
         lda #$06
         sta sprite+5        
 
-		lda #1
+		lda #2
 		sta acc				; normal gravity
 		lda #8
 		sta subpx
@@ -137,7 +150,7 @@ do'input:
         and #1
         beq not'a
 		eor a			 ; debounce with last known value
-		beq a'done
+		beq do'b
 		sta a
 
 		jsr play'square
@@ -147,66 +160,139 @@ do'input:
 		sta sprite
 		sta sprite+4
 
-		jmp a'done
+		jmp do'b
 
 not'a:	stx a
-a'done:	lda $4016        ; B
+do'b:	lda $4016        ; B
 		and #1
 		beq not'b
 		eor b			 ; debounce b
-		beq b'done
+		beq do'up
 		sta b
 
 		jsr play'tri
 
-		jmp b'done
+		jmp do'up
 
 not'b:	stx b 
-b'done: lda $4016        ; Select does nothing
+do'up:	lda $4016        ; Select does nothing
         lda $4016        ; Start does nothing
         lda $4016        ; Up
 
         and #1			 ; only on press
-        beq not'up
+        beq rel'up
 		eor up
-		beq up'done
+		beq do'down
 		sta up
 
 		lda dy
-		bne up'done		 ; can't jump in midair
+		and #$F0
+		bne do'down		 ; can't jump in midair
 		lda #jump		 ; TODO I guess add feather in some higher memory?
 		sta dy
+		lda dx
+		sta jumplock	 ; the last jump velocity
+		jmp do'down
 
+rel'up:	eor up
+		beq not'up
+		lda dy
+		bpl not'up		; only when going up
+		stx dy
 not'up: stx up
-up'done:
+do'down:
 		lda $4016               ; down
         and #1
-        beq not'dn
+        beq do'le
 
-not'dn: lda $4016				; left
+do'le:	lda $4016				; left
 		and #1
-		beq not'le
+		beq do'ri
+		sta holdlr
 
-		lda #$E8
+		lda jumplock			; horizontal velocity at beginning of jump?
+		bne jumping'le
+		lda dy
+		and #$F0
+		bmi do'ri
+		beq nojump'le
+		lda #slowleft
+		jmp load'le
+
+nojump'le:
+		lda #movleft
+load'le:
 		sta dx
 		lda facing
 		ora #$01
 		sta facing
 		jmp lr'done
 
-not'le: lda $4016				; right
+jumping'le:
+		lda facing
+		and #1					; 1 = left
+		beq decelerate'le
+		lda #fastleft
+		sta dx
+		sta jumplock
+		jmp lr'done
+decelerate'le:
+		lda #slowright
+		sta dx
+		sta jumplock
+		jmp lr'done
+
+do'ri:	lda $4016				; right
 		and #1
 		beq not'lr
+		sta holdlr
 
-		lda #$18
+		lda jumplock
+		bne jumping'ri
+		lda dy
+		and #$F0
+		bmi lr'done
+		beq nojump'ri
+		lda #slowright
+		jmp load'ri
+
+nojump'ri:
+		lda #movright
+load'ri:
 		sta dx
 		lda facing
 		and #$FE
 		sta facing
 		jmp lr'done
+
+jumping'ri:
+		lda facing
+		and #1					; 1 = left
+		bne decelerate'ri
+		lda #fastright
+		sta dx
+		sta jumplock
+		jmp lr'done
+decelerate'ri:
+		lda #slowleft
+		sta dx
+		sta jumplock
+		jmp lr'done
 		
-not'lr: stx dx
+not'lr: 
+		lda #$0A
+		sta sprite+1
+		lda #$0C
+		sta sprite+5
+		stx holdlr
+		ldx jumplock
+		stx dx
+		rts
 lr'done:
+		lda #$02
+		sta sprite+1
+		lda #$06
+		sta sprite+5
 		rts
 
 ;subroutine called with the following:
@@ -255,69 +341,90 @@ update'sprite:
 		clc
 		lda dy			; do some gravity
 		adc acc
+		bvc store'acc
+		lda #maxjump	; maximum jump velocity
+		clv
+store'acc:
 		sta dy
-
-		adc sprite		; adding is commutative
+		ldx #sy
+		jsr subpixel'manage
+		adc sprite
 		pha
 		sbc #ground
-		bpl move'sprite
+		bpl hit'ground
 		pla
 		jmp draw'sprite
-move'sprite: 
+hit'ground:
 		pla
 		lda #ground
 		ldx #0
 		stx dy			; turn off the vertical movement
+		stx sy
+		stx jumplock
+		ldx holdlr		; stopped holding left or right
+		bne draw'sprite
+		ldx #0
+		stx dx
 draw'sprite:
 		sta sprite
 		sta sprite+4
 
+		lda dy			; manipulate sprite if jumping/falling
+		and #$F8
+		beq do'anim
+		bpl falling'spr
+		lda #$0E
+		sta sprite+1
+		lda #$10
+		sta sprite+5
+		jmp try'reflect
+
+falling'spr:
+		lda #$12
+		sta sprite+1
+		lda #$14
+		sta sprite+5
+		jmp try'reflect
+
+do'anim:
+		lda dx			; only use animated if moving
+		beq try'reflect
+		lda jumplock
+		bne try'reflect
+		lda facing
+		and #$10
+		bne try'reflect
+
+		inc sprite+1
+		inc sprite+1
+		inc sprite+5
+		inc sprite+5
+
+try'reflect:
 		lda facing
 		and #1
 		bne	do'reflect	; no horizontal reflection
 
-		lda #$06
-		pha 
-		lda #$02
-		pha 
-
 		lda sprite+2
-		and #$BF		; all but that bit
+		and #$BF		; turn off the reflect bit
 		sta sprite+2
 		sta sprite+6
 
 		jmp reflect'done
 		
 do'reflect:
-		lda #$02
-		pha 
-		lda #$06
-		pha 
+		lda sprite+1	; swap
+		ldx sprite+5
+		stx sprite+1
+		sta sprite+5
 
 		lda sprite+2
-		ora #$40		; all but that bit
+		ora #$40		; turn on the reflect bit
 		sta sprite+2
 		sta sprite+6
 		dec sprite+7	; lag compensation
 
 reflect'done:
-		pla
-		sta sprite+1
-		pla
-		sta sprite+5
-		
-
-		lda dx			; only use animated if moving
-		beq anim'done
-		lda facing
-		and #$10
-		bne anim'done
-
-		inc sprite+1
-		inc sprite+1
-		inc sprite+5
-		inc sprite+5
-anim'done:
         lda #>sprite
         sta $4014       ; Jam page $200-$2FF into SPR-RAM
 		rts
