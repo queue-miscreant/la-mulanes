@@ -142,6 +142,7 @@ init'sound:
 
 do'input:
 		ldx #0
+		ldy #2
         lda #$01        ; strobe joypad
         sta $4016
         stx $4016
@@ -205,7 +206,8 @@ do'down:
         and #1
         beq do'le
 
-do'le:	lda $4016				; left
+do'le:	ldx #0
+do'lr:	lda $4016				; load left or right
 		and #1
 		beq do'ri
 		sta holdlr
@@ -215,84 +217,52 @@ do'le:	lda $4016				; left
 		bne jumping'le			; then go to the jumping part
 		lda dy					; okay, maybe we're jumping, but not moving
 		bmi do'ri				; only able to change when falling
-		and #$F0				; so if we're falling...
-		beq nojump'le			; we can only do the slow speed
-		lda #slowleft
-		jmp load'le
-
-nojump'le:
-		lda #movleft
-load'le:
-		sta dx					
-		lda facing
-		ora #$01
-		sta facing
+		beq lr'done				; we can only do the slow speed
+		inx
+		inx
+		inx
 		jmp lr'done
 jumping'le:	
-		lda jumplock
-		bpl decelerate'le		; if the jumplock is positive, then we're jumping right
-		lda #fastleft			; and holding left means deceleration
-		sta dx
-		ora #1
-		sta jumplock
-		jmp lr'done
-decelerate'le:
-		lda #slowleft
-		sta dx
-		ora #1
-		sta jumplock
-		jmp lr'done
+		inx
+		lda #1
+		bit facing				; holding left; if 0, then decelerate
+		bne lr'jump
+		inx
+		jmp lr'jump
 
-do'ri:	lda $4016				; right
-		and #1
-		beq not'lr
-		sta holdlr
-
-		lda jumplock			; are we jumping?
-		and #$FE
-		bne jumping'ri
-		lda dy
-		bmi lr'done
-		and #$F0
-		beq nojump'ri
-		lda #slowright
-		jmp load'ri
-
-nojump'ri:
-		lda #movright
-load'ri:
-		sta dx
-		lda facing
-		and #$FE
-		sta facing
-		jmp lr'done
-
-jumping'ri:
-		lda jumplock
-		bmi decelerate'ri
-		lda #fastright
-		sta dx
-		ora #1
-		sta jumplock
-		jmp lr'done
-decelerate'ri:
-		lda #slowright
-		sta dx
-		ora #1
-		sta jumplock
-		jmp lr'done
-		
-not'lr: 
+do'ri:	ldx #4
+		dey
+		bne do'lr
+							; not left or right
 		lda #$0A			; store the still sprites
 		sta sprite+1
 		lda #$0C
 		sta sprite+5
-		stx holdlr
+		sty holdlr
 		lda jumplock
 		and #$FE
 		sta dx
 		rts
+lr'jump:
+		lda jumping'data,x
+		ora #1
+		sta jumplock
+		jmp update'done
 lr'done:
+		dey
+		beq facing'right
+		lda #$01
+		ora facing
+		jmp facing'done
+facing'right:
+		lda #$FE
+		and facing
+facing'done:
+		sta facing
+		lda jumping'data,x
+update'done:
+		sta dx
+
 		lda #$02
 		sta sprite+1
 		lda #$06
@@ -452,15 +422,16 @@ play'tri:
 		sta $4008
 		rts
 
-vblank: jsr do'input
-		jsr update'sprite
+vblank: jsr update'sprite
+		jsr do'input
+		
 irq:    rti
 
 palette:
 .byte $0E,$00,$0E,$19,$00,$00,$00,$00,$00,$00,$00,$00,$01,$00,$01,$21	; BG
 .byte $0E,$0F,$1A,$38,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00	; Sprite
 jumping'data:
-.byte $E8,$F4,$E0,$18,$0C,$20											; organized as left (norm, slow, high), right
+.byte $E8,$E0,$F4,$F4,$18,$0C,$20,$0C									; organized as left (norm, slow, high), right
 
 .advance $FFFA
 .word vblank, reset, irq
