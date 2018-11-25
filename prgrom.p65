@@ -6,27 +6,6 @@
 .alias		  maxjump	$40
 .alias		  gravity 	$02
 
-.alias	lemezaUL0		$00
-.alias	lemezaUL1		$01
-.alias	lemezaUR0		$02
-.alias	lemezaUR1		$03
-.alias	lemezaBLStatic	$04
-.alias	lemezaBRStatic	$05
-.alias	lemezaBL0		$06
-.alias	lemezaBL1		$07
-.alias	lemezaBR0		$08
-.alias	lemezaBR1		$09
-
-.alias	lemezaULjump	$0A
-.alias	lemezaURjump	$0B
-.alias	lemezaBLjump	$0C
-.alias	lemezaBRjump	$0D
-
-.alias	lemezaULfall	$0E
-.alias	lemezaURfall	$0F
-.alias	lemezaBLfall	$10
-.alias	lemezaBRfall	$11
-
 .segment zp
 .org $0000
 
@@ -95,7 +74,7 @@ reset:  sei
 	jsr init'sprites
 	jsr init'sound
 
-        lda #%10001000
+        lda #%10101000
         sta $2000
         lda #%00011110
         sta $2001
@@ -116,24 +95,15 @@ init'sprites:
         ; initialize Sprite 0
         lda #ground
         sta sprite          ; Y coordinate
-        sta sprite+4
-		adc #8
-        sta sprite+8
-        sta sprite+12 
+        sta sprite+4        ; Y coordinate
 
         stx sprite+3        ; X coordinate
-        stx sprite+11
 		lda #$08
-        sta sprite+7
-        stx sprite+15
-        lda #lemezaBLStatic
+        sta sprite+7        ; X coordinate
+        lda #$02
         sta sprite+1        ; Pattern number
-		lda #lemezaBRStatic
-        sta sprite+5        ; Pattern number
-        lda #lemezaUL0
-        sta sprite+5
-        lda #lemezaUR0
-        sta sprite+5
+        lda #$06
+        sta sprite+5        
 
 		lda #8
 		sta subpx
@@ -257,9 +227,9 @@ do'ri:	ldx #4
 		dey
 		bne do'lr
 							; not left or right
-		lda #lemezaBLStatic	; store the still sprites
+		lda #$0A			; store the still sprites
 		sta sprite+1
-		lda #lemezaBRStatic
+		lda #$0C
 		sta sprite+5
 		sty holdlr
 		lda jumplock
@@ -284,9 +254,9 @@ facing'done:
 update'done:
 		sta dx
 
-		lda #lemezaBR0
+		lda #$02
 		sta sprite+1
-		lda #lemezaBL0
+		lda #$06
 		sta sprite+5
 		rts
 
@@ -330,10 +300,8 @@ update'sprite:
 		jsr subpixel'manage
 		adc sprite+3
 		sta sprite+3
-		sta sprite+11
 		adc #8
 		sta sprite+7
-		sta sprite+15
 
 		clc
 		lda dy			; do some gravity
@@ -364,34 +332,23 @@ hit'ground:
 		lda #ground
 draw'sprite:
 		sta sprite
-		sta sprite+8
-		sbc #8
 		sta sprite+4
-		sta sprite+12
 
 		lda dy			; manipulate sprite if jumping/falling
-		;and #$F8
+		and #$F8
 		beq do'anim
 		bpl falling'spr
-		ldx #lemezaBLjump
+		lda #$0E
 		sta sprite+1
-		lda #lemezaBRjump
+		lda #$10
 		sta sprite+5
-		lda #lemezaULjump
-		sta sprite+9
-		lda #lemezaURjump
-		sta sprite+13
 		jmp try'reflect
 
 falling'spr:
-		ldx #lemezaBLfall
+		lda #$12
 		sta sprite+1
-		lda #lemezaBRfall
+		lda #$14
 		sta sprite+5
-		lda #lemezaULfall
-		sta sprite+9
-		lda #lemezaURfall
-		sta sprite+13
 		jmp try'reflect
 
 do'anim:
@@ -404,9 +361,9 @@ do'anim:
 		bne try'reflect
 
 		inc sprite+1
+		inc sprite+1
 		inc sprite+5
-		inc sprite+9
-		inc sprite+13
+		inc sprite+5
 
 try'reflect:
 		lda facing
@@ -425,17 +382,11 @@ do'reflect:
 		ldx sprite+5
 		stx sprite+1
 		sta sprite+5
-		lda sprite+9	; swap
-		ldx sprite+13
-		stx sprite+9
-		sta sprite+13
 
 		lda sprite+2
 		ora #$40		; turn on the reflect bit
 		sta sprite+2
 		sta sprite+6
-		sta sprite+10
-		sta sprite+14
 
 reflect'done:
 		lda dx
@@ -466,12 +417,6 @@ play'tri:
 		rts
 
 vblank: jsr update'sprite
-
-		lda lemezaUL0
-		sta sprite+9
-		lda lemezaUR0
-		sta sprite+15
-
 		jsr do'input
 		
 irq:    rti
