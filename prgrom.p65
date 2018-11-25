@@ -4,13 +4,7 @@
 .alias        jump      $C8
 .alias        ground    $D0
 .alias		  maxjump	$40
-
-.alias		  movleft   $E8	; = 1110 1000 = -1.5  px/vblank
-.alias		  movright  $18 ; = 0001 1000 =  1.5  px/vblank
-.alias		  slowleft 	$F4 ; = 1111 0100 = - .75 px/vblank
-.alias		  slowright $0C ; = 0000 1100 =   .75 px/vblank
-.alias		  fastleft	$E0 ; = 1110 0000 = -2    px/vblank
-.alias		  fastright $20 ; = 0010 0000 =  2    px/vblank
+.alias		  gravity 	$02
 
 .segment zp
 .org $0000
@@ -20,12 +14,13 @@
 .space currbuttons 1
 .space prevbuttons 1
 
+;$03: button data
 .space a 1	; debounce for a
 .space b 1	; debounce for b
 .space up 1 ; 
 .space holdlr 1;
 
-;$05: 
+;$06: 
 .space sx 1	;	subpixel horizontal positioning
 .space dx 1 ;	horizontal movement
 .space sy 1	;	subpixel vertical positioning
@@ -33,7 +28,7 @@
 .space acc 1 ;	i know gravity ain't an excuse
 .space jumplock 1
 
-;$0B: constants and clocks
+;$0C: constants and clocks
 .space facing 1 ; bit 1: direction facing (0 = right, 1 = left), upper: animation count
 .space subpx 1  ; constant 8
 
@@ -110,8 +105,6 @@ init'sprites:
         lda #$06
         sta sprite+5        
 
-		lda #2
-		sta acc				; normal gravity
 		lda #8
 		sta subpx
 
@@ -186,12 +179,13 @@ do'up:	lda $4016        ; Select does nothing
 		beq do'down
 		sta up
 
-		lda jumplock
+		lda acc
 		bne do'down		 ; can't jump in midair
+		lda #gravity
+		sta acc
 		lda #jump		 ; TODO I guess add feather in some higher memory?
 		sta dy
 		lda dx
-		ora #1			 ; set the LSB to show we're jumping
 		sta jumplock	 ; the last jump velocity
 		jmp do'down
 
@@ -213,8 +207,7 @@ do'lr:	lda $4016				; load left or right
 		sta holdlr
 
 		lda jumplock			; horizontal velocity at beginning of jump?
-		and #$FE				; are we jumping and moving?
-		bne jumping'le			; then go to the jumping part
+		bne jumping'le			; are we jumping and moving? then go to the jumping part
 		lda dy					; okay, maybe we're jumping, but not moving
 		bmi do'ri				; only able to change when falling
 		beq lr'done				; we can only do the slow speed
@@ -240,12 +233,10 @@ do'ri:	ldx #4
 		sta sprite+5
 		sty holdlr
 		lda jumplock
-		and #$FE
 		sta dx
 		rts
 lr'jump:
 		lda jumping'data,x
-		ora #1
 		sta jumplock
 		jmp update'done
 lr'done:
@@ -333,6 +324,7 @@ hit'ground:
 		ldx #0
 		stx dy			; turn off the vertical movement
 		stx sy
+		stx acc
 		stx jumplock	; free the lock
 		ldy holdlr		; stopped holding left or right
 		bne draw'sprite
@@ -363,7 +355,6 @@ do'anim:
 		lda dx			; only use animated if moving
 		beq try'reflect
 		lda jumplock
-		and #$FE
 		bne try'reflect
 		lda facing
 		and #$10
@@ -396,9 +387,12 @@ do'reflect:
 		ora #$40		; turn on the reflect bit
 		sta sprite+2
 		sta sprite+6
-		dec sprite+7	; lag compensation
 
 reflect'done:
+		lda dx
+		bpl no'lag'compensate
+		dec sprite+7	; lag compensation
+no'lag'compensate:
         lda #>sprite
         sta $4014       ; Jam page $200-$2FF into SPR-RAM
 		rts
@@ -431,7 +425,10 @@ palette:
 .byte $0E,$00,$0E,$19,$00,$00,$00,$00,$00,$00,$00,$00,$01,$00,$01,$21	; BG
 .byte $0E,$0F,$1A,$38,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00	; Sprite
 jumping'data:
-.byte $E8,$E0,$F4,$F4,$18,$0C,$20,$0C									; organized as left (norm, slow, high), right
+.byte $E8,$E0,$0C,$F4,$18,$F4,$20,$0C	; dx values for jumping and otherwise
+										; used as lookup table in input subroutine
+;.byte $E8,$E0,$F4,$F4,$18,$0C,$20,$0C	; this table is closer to the remake's jumping physics
+;(normal value),(value when left is pressed during a jump),(value when right is pressed during a jump),(value when l/r during a neutral jump)
 
 .advance $FFFA
 .word vblank, reset, irq
