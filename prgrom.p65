@@ -1,6 +1,27 @@
 ; Adapted from program code for NES 101 (Michael Martin), 2001-2
 
 .alias        sprite	$200
+
+.alias        spriteBLy	$2000
+.alias        spriteBLs	$2001
+.alias        spriteBLd	$2002
+.alias        spriteBLx	$2003
+
+.alias        spriteBRy	$2004
+.alias        spriteBRs	$2005
+.alias        spriteBRd	$2006
+.alias        spriteBRx	$2007
+
+.alias        spriteULy	$2008
+.alias        spriteULs	$2009
+.alias        spriteULd	$200A
+.alias        spriteULx	$200B
+
+.alias        spriteURy	$200C
+.alias        spriteURs	$200D
+.alias        spriteURd	$200E
+.alias        spriteURx	$200F
+
 .alias        jump      $C8
 .alias        ground    $D0
 .alias		  maxjump	$40
@@ -115,25 +136,26 @@ init'sprites:
 
         ; initialize Sprite 0
         lda #ground
-        sta sprite          ; Y coordinate
-        sta sprite+4
-		adc #8
-        sta sprite+8
-        sta sprite+12 
+        sta spriteBLy          ; Y coordinate
+        sta spriteBRy
+		sbc #8
+        sta spriteULy
+        sta spriteURy
 
-        stx sprite+3        ; X coordinate
-        stx sprite+11
+        stx spriteBLx         ; X coordinate
+        stx spriteULx
 		lda #$08
-        sta sprite+7
-        stx sprite+15
+        sta spriteBRx
+        sta spriteURx
+
         lda #lemezaBLStatic
-        sta sprite+1        ; Pattern number
+        sta spriteBLs         ; Pattern number
 		lda #lemezaBRStatic
-        sta sprite+5        ; Pattern number
+        sta spriteBRs         ; Pattern number
         lda #lemezaUL0
-        sta sprite+5
+        sta spriteULs
         lda #lemezaUR0
-        sta sprite+5
+        sta spriteURs
 
 		lda #8
 		sta subpx
@@ -181,8 +203,8 @@ do'input:
 		stx dy
 		stx dx
 		lda #ground
-		sta sprite
-		sta sprite+4
+		sta spriteBLy
+		sta spriteBRy
 
 		jmp do'b
 
@@ -258,9 +280,9 @@ do'ri:	ldx #4
 		bne do'lr
 							; not left or right
 		lda #lemezaBLStatic	; store the still sprites
-		sta sprite+1
+		sta spriteBLs
 		lda #lemezaBRStatic
-		sta sprite+5
+		sta spriteBRs
 		sty holdlr
 		lda jumplock
 		sta dx
@@ -284,10 +306,10 @@ facing'done:
 update'done:
 		sta dx
 
-		lda #lemezaBR0
-		sta sprite+1
 		lda #lemezaBL0
-		sta sprite+5
+		sta spriteBLs
+		lda #lemezaBR0
+		sta spriteBRs
 		rts
 
 ;subroutine called with the following:
@@ -328,12 +350,11 @@ update'sprite:
 		lda dx
 		ldx #sx
 		jsr subpixel'manage
-		adc sprite+3
-		sta sprite+3
-		sta sprite+11
+		adc spriteBLx
+		sta spriteULx
 		adc #8
-		sta sprite+7
-		sta sprite+15
+		sta spriteBRx
+		sta spriteURx
 
 		clc
 		lda dy			; do some gravity
@@ -345,7 +366,7 @@ store'acc:
 		sta dy
 		ldx #sy
 		jsr subpixel'manage
-		adc sprite
+		adc spriteBLy
 		pha
 		sbc #ground
 		bpl hit'ground
@@ -363,35 +384,35 @@ hit'ground:
 		stx dx
 		lda #ground
 draw'sprite:
-		sta sprite
-		sta sprite+8
+		sta spriteBLy
+		sta spriteBRy
 		sbc #8
-		sta sprite+4
-		sta sprite+12
+		sta spriteURy
+		sta spriteULy
 
 		lda dy			; manipulate sprite if jumping/falling
 		;and #$F8
 		beq do'anim
 		bpl falling'spr
 		ldx #lemezaBLjump
-		sta sprite+1
+		sta spriteBLs
 		lda #lemezaBRjump
-		sta sprite+5
+		sta spriteBRs
 		lda #lemezaULjump
-		sta sprite+9
+		sta spriteULs
 		lda #lemezaURjump
-		sta sprite+13
+		sta spriteURs
 		jmp try'reflect
 
 falling'spr:
 		ldx #lemezaBLfall
-		sta sprite+1
+		sta spriteBLs
 		lda #lemezaBRfall
-		sta sprite+5
+		sta spriteBRs
 		lda #lemezaULfall
-		sta sprite+9
+		sta spriteULs
 		lda #lemezaURfall
-		sta sprite+13
+		sta spriteURs
 		jmp try'reflect
 
 do'anim:
@@ -403,44 +424,49 @@ do'anim:
 		and #$10
 		bne try'reflect
 
-		inc sprite+1
-		inc sprite+5
-		inc sprite+9
-		inc sprite+13
+		inc spriteBLs
+		inc spriteBRs
+		inc spriteULs
+		inc spriteURs
 
 try'reflect:
 		lda facing
 		and #1
 		bne	do'reflect	; no horizontal reflection
 
-		lda sprite+2
+		lda spriteBLd
 		and #$BF		; turn off the reflect bit
-		sta sprite+2
-		sta sprite+6
+		sta spriteBLd
+		sta spriteBRd
+		sta spriteULd
+		sta spriteURd
 
 		jmp reflect'done
 		
 do'reflect:
-		lda sprite+1	; swap
-		ldx sprite+5
-		stx sprite+1
-		sta sprite+5
-		lda sprite+9	; swap
-		ldx sprite+13
-		stx sprite+9
-		sta sprite+13
+		lda spriteBLs	; swap lower
+		ldx spriteBRs
+		stx spriteBLs
+		sta spriteBRs
 
-		lda sprite+2
+		lda spriteULs	; swap upper
+		ldx spriteURs
+		stx spriteULs
+		sta spriteURs
+
+		lda spriteBLd
 		ora #$40		; turn on the reflect bit
-		sta sprite+2
-		sta sprite+6
-		sta sprite+10
-		sta sprite+14
+		sta spriteBLd
+		sta spriteBRd
+		sta spriteULd
+		sta spriteURd
 
 reflect'done:
 		lda dx
 		bpl no'lag'compensate
-		dec sprite+7	; lag compensation
+		dec spriteURx	; lag compensation
+		dec spriteBRx
+
 no'lag'compensate:
         lda #>sprite
         sta $4014       ; Jam page $200-$2FF into SPR-RAM
@@ -465,13 +491,13 @@ play'tri:
 		sta $4008
 		rts
 
-vblank: jsr update'sprite
+vblank:
+		lda #lemezaUL0
+		sta spriteULs
+		lda #lemezaUR0
+		sta spriteURs
 
-		lda lemezaUL0
-		sta sprite+9
-		lda lemezaUR0
-		sta sprite+15
-
+		jsr update'sprite
 		jsr do'input
 		
 irq:    rti
