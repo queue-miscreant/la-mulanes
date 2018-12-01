@@ -1,41 +1,60 @@
 ; Adapted from program code for NES 101 (Michael Martin), 2001-2
 
 .alias        sprite	$200
-.alias        jump      $C8
-.alias        ground    $E0
+.alias        jump      $D8
+.alias        ground    $B4
 .alias		  maxjump	$40
+.alias		  gravity 	$01
 
-.alias		  movleft   $E8
-.alias		  movright  $18
-.alias		  slowleft 	$F4
-.alias		  slowright $0C
-.alias		  fastleft	$E0
-.alias		  fastright $20
+.alias		  lemezaLstatic	$02
+.alias		  lemezaRstatic	$04
+
+.alias		  lemezaLanim0	$06	; inc inc = 12 cycles (since page 2) lda #06 sta $0201 = 6 cycles
+.alias		  lemezaLanim1	$08
+.alias		  lemezaRanim0	$0A
+.alias		  lemezaRanim1	$0C
+
+.alias		  lemezaLjump	$0E
+.alias		  lemezaRjump	$10
+
+.alias		  lemezaLfall	$12
+.alias		  lemezaRfall	$14
+
+.alias		  jumptime'beg  $05			; frame delay between initiating and executing a jump
 
 .segment zp
 .org $0000
 
-;$00: data 
-.space freq 1
-.space currbuttons 1
-.space prevbuttons 1
+;$00: button data
+.space a 1 			; debounce for a
+.space b 1 			; debounce for b
+.space up 1 		; debounce for up
+.space holdlr 1 	; debounce for l/r
 
-.space a 1	; debounce for a
-.space b 1	; debounce for b
-.space up 1 ; 
-.space holdlr 1;
-
-;$05: 
-.space sx 1	;	subpixel horizontal positioning
-.space dx 1 ;	horizontal movement
-.space sy 1	;	subpixel vertical positioning
-.space dy 1 ;	vertical movement
-.space acc 1 ;	i know gravity ain't an excuse
+;$04: movement
+.space sx 1 	; subpixel horizontal positioning
+.space dx 1 	; horizontal movement
+.space sy 1 	; subpixel vertical positioning
+.space dy 1 	; vertical movement
+.space acc 1 	; i know gravity ain't an excuse
 .space jumplock 1
+.space jumptime 1
 
-;$0B: constants and clocks
-.space facing 1 ; bit 1: direction facing (0 = right, 1 = left), upper: animation count
-.space subpx 1  ; constant 8
+;$0B: hi and lo temp memory
+.space tmp'hi 1
+.space tmp'lo 1
+.space tmp'constant 1  ; constant for subroutines using bit/X,Y for looping
+.space tmp'var 1	   ; same but different a 'variable'
+
+;$0F: simple field memory
+.space field'hi 1
+.space field'lo 1
+.space field'offset 1
+
+;$12: constants and clocks
+.space facing 1 ; LSB: direction facing (0 = right, 1 = left)
+				; upper: lemeza animation count
+
 
 ; If we had a normal data segment, it would have an .org $0300, so
 ; that it doesn't stomp on our sprite data.
@@ -45,111 +64,188 @@
 .text
 .org $C000
 
-reset:  sei
-	cld
+reset:
+		sei
+		cld
 	; Wait two VBLANKs.
-*	lda $2002
-	bpl -
-*	lda $2002
-	bpl -
+*		lda $2002
+		bpl -
+*		lda $2002
+		bpl -
 
 	; Clear out RAM.
-        lda #$00
-        ldx #$00
-*       sta $000,x
-        sta $100,x
-        sta $200,x
-        sta $300,x
-        sta $400,x
-        sta $500,x
-        sta $600,x
-        sta $700,x
-        inx
-        bne -
+		lda #$00
+		ldx #$00
+* 		sta $000,x
+		sta $100,x
+		sta $200,x
+		sta $300,x
+		sta $400,x
+		sta $500,x
+		sta $600,x
+		sta $700,x
+		inx
+		bne -
 
 	; Reset the stack pointer.
-        ldx #$FF
-        txs
+		ldx #$FF
+		txs
 
 	; Disable all graphics.
-        lda #$00
-        sta $2000
-        sta $2001
+		lda #$00
+		sta $2000
+		sta $2001
 
-	jsr init'sprites
-	jsr init'sound
+		jsr init'sprites
+		jsr load'name'tables
+		jsr load'palette
+		jsr init'sound
 
-        lda #%10101000
-        sta $2000
-        lda #%00011110
-        sta $2001
+		lda $2002
+		lda #%10111000
+		sta $2000
+		lda #%00011110
+		sta $2001
 
-	cli
+		cli
 
 	; Transfer control to the VBLANK routines.
-loop:   jmp loop
+loop:
+		jmp loop
 
 init'sprites:
-        ; Clear page #2, which we'll use to hold sprite data
-        lda #$00
-        ldx #$00
-*       sta sprite, x
-        inx
-        bne -
+		; clear page 2 for DMA
+		lda #$00
+		ldx #$00
+*		sta sprite, x
+		inx
+		bne -
 
-        ; initialize Sprite 0
-        lda #ground
-        sta sprite          ; Y coordinate
-        sta sprite+4        ; Y coordinate
+		; initialize Sprite 0
+		lda #ground
+		sta sprite          ; Y coordinate
+		sta sprite+4
 
-        stx sprite+3        ; X coordinate
+		stx sprite+3        ; X coordinate
 		lda #$08
-        sta sprite+7        ; X coordinate
-        lda #$02
-        sta sprite+1        ; Pattern number
-        lda #$06
-        sta sprite+5        
+		sta sprite+7
+		lda #lemezaLstatic
+		sta sprite+1        ; Pattern number
+		lda #lemezaRstatic
+		sta sprite+5
+		rts
 
-		lda #2
-		sta acc				; normal gravity
-		lda #8
-		sta subpx
+load'name'tables:
+		lda #<bg
+		sta tmp'hi
+		lda #>bg
+		sta tmp'lo
+		lda #$27
+		sta $2006
+		lda #$7E
+		sta $2006
+		jsr nametable'rle'decode
+		rts
 
 load'palette:
-        lda #$3F
-        ldx #$00
-        sta $2006
-        stx $2006
-*       lda palette,x
-        sta $2007
-        inx
-        cpx #$20
-        bne -
-        rts
+		lda #$3F
+		ldx #$00
+		sta $2006
+		stx $2006
+*		lda palette,x
+		sta $2007
+		inx
+		cpx #$20
+		bne -
+		rts
+
+; subroutine for loading the name table with a RLE sequence
+;  (from address in tmp'hi/lo)
+; run lengths have an LSB of 0 (and hence only take even values
+; data has an LSB of 1, the next 5 bits are a number, setting bit 6 indicates
+; 	whether or not to add the current field number(*32) as an offset, and
+;   setting bit 7 indicates that the number is a generator rather than a sprite
+
+nametable'rle'decode:
+		ldy #0
+rle'decode'loop:
+		lda (tmp'hi),y
+		beq rle'decode'done	; flag all 0's with done
+		iny
+		tax
+		and #1
+		beq rle'load'data
+		stx a			; fortunately, generic name a works for temp vars
+		ldx #1
+		jmp rle'length'done
+rle'load'data:
+		lda (tmp'hi),y
+		iny
+		sta a
+rle'length'done:
+		jsr rle'decode'data
+*		sta $2007
+		dex
+		bne -
+		jmp rle'decode'loop
+rle'decode'done:
+		rts
+		
+		
+rle'decode'data:
+		lda a
+		bit a
+		php				; push state: V contains offset, N contains isgenerator
+		lsr
+		and #%00011111	; only the lower 5 bits matter
+		plp				; generator?
+		bmi rle'decode'generator
+		bvc write'tile
+		adc field'offset
+write'tile:
+		rts
+
+rle'decode'generator:
+		stx b
+		ldx #0
+		stx tmp'constant
+		plp				; field offset flag
+		bvc generator'write
+		ldx field'offset
+		stx tmp'constant
+generator'write:
+		ldx #4
+*		lda generators,x
+		adc tmp'constant
+		sta $2007
+		dex
+		bne -
+		ldx b
+		jmp rle'decode'loop
 
 init'sound:
-        ; initialize sound hardware
+		; initialize sound hardware
 		; only turn on square wave 1
-        lda #$05
-        sta $4015
+		lda #$05
+		sta $4015
 		; disable sweep
-        lda #$00
-        sta $4001
-	; disable frame interrupt
-	lda #$40
-	sta $4017
-        rts
+		lda #$00
+		sta $4001
+		; disable frame interrupt
+		lda #$40
+		sta $4017
+		rts
 
 do'input:
 		ldx #0
-        lda #$01        ; strobe joypad
-        sta $4016
-        stx $4016
+		lda #1 			; strobe joypad
+		sta $4016
+		stx $4016
 
-        lda $4016        ; A button
-        and #1
-        beq not'a
-		eor a			 ; debounce with last known value
+		lda $4016       ; A button
+		and #1
+		beq not'a
+		eor a			; debounce with last known value
 		beq do'b
 		sta a
 
@@ -162,8 +258,10 @@ do'input:
 
 		jmp do'b
 
-not'a:	stx a
-do'b:	lda $4016        ; B
+not'a:
+		stx a
+do'b:
+		lda $4016        ; B
 		and #1
 		beq not'b
 		eor b			 ; debounce b
@@ -174,133 +272,131 @@ do'b:	lda $4016        ; B
 
 		jmp do'up
 
-not'b:	stx b 
-do'up:	lda $4016        ; Select does nothing
-        lda $4016        ; Start does nothing
-        lda $4016        ; Up
+not'b:
+		stx b
+do'up:
+		lda $4016        ; Select does nothing
+		lda $4016        ; Start does nothing
+		lda $4016        ; Up
 
-        and #1			 ; only on press
-        beq rel'up
+		and #1			 ; only on press
+		beq rel'up
 		eor up
 		beq do'down
 		sta up
 
-		lda dy
-		and #$F0
+		lda acc
 		bne do'down		 ; can't jump in midair
-		lda #jump		 ; TODO I guess add feather in some higher memory?
-		sta dy
-		lda dx
-		sta jumplock	 ; the last jump velocity
+		lda #jumptime'beg			 ; frame delay to begin a jump
+		sta jumptime
 		jmp do'down
 
-rel'up:	eor up
+rel'up:
+		eor up
 		beq not'up
 		lda dy
-		bpl not'up		; only when going up
-		stx dy
-not'up: stx up
+		bpl not'up		 ; only when going up
+		lda #$FD
+		sta dy
+not'up:
+		stx up
 do'down:
 		lda $4016               ; down
-        and #1
-        beq do'le
+		and #1
+		beq do'le
 
-do'le:	lda $4016				; left
+do'le:
+		ldx #0
+		ldy #2
+do'lr:
+		lda $4016				; load left or right
 		and #1
 		beq do'ri
 		sta holdlr
 
+		jsr jump'prepare		; no velocity if prepping for a jump
 		lda jumplock			; horizontal velocity at beginning of jump?
-		bne jumping'le
-		lda dy
-		and #$F0
-		bmi do'ri
-		beq nojump'le
-		lda #slowleft
-		jmp load'le
-
-nojump'le:
-		lda #movleft
-load'le:
-		sta dx
-		lda facing
-		ora #$01
-		sta facing
+		bne jumping'le			; are we jumping and moving? then go to the jumping part
+		lda dy					; okay, maybe we're jumping, but not moving
+		bmi do'ri				; only able to change when falling
+		beq lr'done				; we can only do the slow speed
+		inx
+		inx
+		inx
 		jmp lr'done
-
 jumping'le:
-		lda facing
-		and #1					; 1 = left
-		beq decelerate'le
-		lda #fastleft
-		sta dx
-		sta jumplock
-		jmp lr'done
-decelerate'le:
-		lda #slowright
-		sta dx
-		sta jumplock
-		jmp lr'done
+		inx
+		lda #1
+		bit facing				; holding left; if 0, then decelerate
+		bne lr'jump
+		inx
+		jmp lr'jump
 
-do'ri:	lda $4016				; right
-		and #1
-		beq not'lr
-		sta holdlr
-
-		lda jumplock
-		bne jumping'ri
-		lda dy
-		and #$F0
-		bmi lr'done
-		beq nojump'ri
-		lda #slowright
-		jmp load'ri
-
-nojump'ri:
-		lda #movright
-load'ri:
-		sta dx
-		lda facing
-		and #$FE
-		sta facing
-		jmp lr'done
-
-jumping'ri:
-		lda facing
-		and #1					; 1 = left
-		bne decelerate'ri
-		lda #fastright
-		sta dx
-		sta jumplock
-		jmp lr'done
-decelerate'ri:
-		lda #slowleft
-		sta dx
-		sta jumplock
-		jmp lr'done
-		
-not'lr: 
-		lda #$0A
+do'ri:
+		ldx #4
+		dey
+		bne do'lr
+no'lr:							; not left or right
+		ldx #0
+		lda #lemezaLstatic
 		sta sprite+1
-		lda #$0C
+		lda #lemezaRstatic
 		sta sprite+5
 		stx holdlr
-		ldx jumplock
+		lda jumptime
+		beq get'jumplock
 		stx dx
 		rts
+get'jumplock:
+		lda jumplock
+		sta dx
+		rts
+lr'jump:
+		lda jumping'data,x
+		sta jumplock
+		jmp update'done
 lr'done:
-		lda #$02
+		dey
+		beq facing'right
+		lda #$01
+		ora facing
+		jmp facing'done
+facing'right:
+		lda #%11111110
+		and facing
+facing'done:
+		sta facing
+		lda jumping'data,x
+update'done:
+		sta dx
+
+		lda #lemezaLanim0
 		sta sprite+1
-		lda #$06
+		lda #lemezaRanim0
 		sta sprite+5
 		rts
 
-;subroutine called with the following:
+; subroutine that returns if we're not preparing for a jump
+; 	otherwise, jumps to no'lr, where
+jump'prepare:
+		lda jumptime
+		bne nolr'jump	; ignore this subroutine if we're jumping
+		rts
+nolr'jump:
+		pla				; get rid of the return address
+		pla 			; tsx inc inc txs is the same number of cycles(=8)
+		lda jumping'data,x 	; set jumplock just in case
+		sta jumplock
+		jmp no'lr
+
+; subroutine called with the following:
 ;	X contains 0-255, pointing to data on the zero page
-;	A contains the value you want to add in subpixels, which are 8 bits, 
+;	A contains the value you want to add in subpixels, which are 8 bits,
 ;		with a fixed point at the fourth bit
 ;	returns (in A) offset to 'higher' bits (like those stored in a sprite)
-subpixel'manage:		
+subpixel'manage:
+		ldy #8
+		sty tmp'constant
 		clc
 		adc $00,X
 		pha
@@ -308,7 +404,7 @@ subpixel'manage:
 		eor #$FF		; negate
 		adc #1
 lower'bits:
-		and #$0F
+		and #%00001111
 		sta $00,X
 		pla
 
@@ -316,16 +412,33 @@ lower'bits:
 		lsr
 		lsr
 		lsr
-		bit subpx
+		bit tmp'constant
 		beq not'neg
 		clc
-		adc	#$F0
+		ora	#%11110000
 not'neg:
 		clc
 		rts
 
 update'sprite:
 		clc
+		ldx jumptime
+		beq no'jump		; if zero before decrement, ignore
+		dex
+		stx jumptime
+		bne no'jump
+
+		lda #gravity
+		sta acc
+		lda #jump		; TODO I guess add feather in some higher memory?
+		sta dy
+		lda #1 			; holding l or r still?
+		bit holdlr
+		beq no'jump 	; only then set the jump velocity
+		lda jumplock
+		sta dx
+
+no'jump:
 		lda facing		; use the upper bits for animation
 		adc #2
 		sta facing
@@ -349,45 +462,41 @@ store'acc:
 		ldx #sy
 		jsr subpixel'manage
 		adc sprite
-		pha
-		sbc #ground
+		cmp #ground
 		bpl hit'ground
-		pla
 		jmp draw'sprite
 hit'ground:
-		pla
-		lda #ground
 		ldx #0
 		stx dy			; turn off the vertical movement
 		stx sy
-		stx jumplock
-		ldx holdlr		; stopped holding left or right
+		stx acc
+		stx jumplock	; free the lock
+		ldy holdlr		; stopped holding left or right
 		bne draw'sprite
-		ldx #0
 		stx dx
+		lda #ground
 draw'sprite:
 		sta sprite
 		sta sprite+4
 
 		lda dy			; manipulate sprite if jumping/falling
-		and #$F8
 		beq do'anim
 		bpl falling'spr
-		lda #$0E
+		lda #lemezaLjump
 		sta sprite+1
-		lda #$10
+		lda #lemezaRjump
 		sta sprite+5
 		jmp try'reflect
 
 falling'spr:
-		lda #$12
+		lda #lemezaLfall
 		sta sprite+1
-		lda #$14
+		lda #lemezaRfall
 		sta sprite+5
 		jmp try'reflect
 
-do'anim:
-		lda dx			; only use animated if moving
+do'anim:				; only use animated if moving
+		lda dx
 		beq try'reflect
 		lda jumplock
 		bne try'reflect
@@ -395,10 +504,10 @@ do'anim:
 		and #$10
 		bne try'reflect
 
-		inc sprite+1
-		inc sprite+1
-		inc sprite+5
-		inc sprite+5
+		lda #lemezaLanim1
+		sta sprite+1
+		lda #lemezaRanim1
+		sta sprite+5
 
 try'reflect:
 		lda facing
@@ -406,12 +515,12 @@ try'reflect:
 		bne	do'reflect	; no horizontal reflection
 
 		lda sprite+2
-		and #$BF		; turn off the reflect bit
+		and #%10111111	; turn off the reflect bit
 		sta sprite+2
 		sta sprite+6
 
 		jmp reflect'done
-		
+
 do'reflect:
 		lda sprite+1	; swap
 		ldx sprite+5
@@ -419,28 +528,31 @@ do'reflect:
 		sta sprite+5
 
 		lda sprite+2
-		ora #$40		; turn on the reflect bit
+		ora #%01000000	; turn on the reflect bit
 		sta sprite+2
 		sta sprite+6
-		dec sprite+7	; lag compensation
 
 reflect'done:
-        lda #>sprite
-        sta $4014       ; Jam page $200-$2FF into SPR-RAM
+		lda dx
+		bpl no'lag'compensate
+		dec sprite+7	; lag compensation
+no'lag'compensate:
+		lda #>sprite
+		sta $4014       ; Jam page $200-$2FF into SPR-RAM
 		rts
 
 
 play'square:
 		lda #$84		 ; decaying envelope
 		sta $4000
-		lda freq		 ; period in here
+		lda #0			 ; period in here
 		sta $4002
 		lda #$09		 ; length and period high
 		sta $4003
 		rts
 
 play'tri:
-		lda freq
+		lda #0
 		sta $400A
 		lda #$09
 		sta $400B
@@ -448,13 +560,28 @@ play'tri:
 		sta $4008
 		rts
 
-vblank: jsr do'input
+vblank:
 		jsr update'sprite
-irq:    rti
+		jsr do'input
+irq:
+		rti
 
 palette:
-.byte $0E,$00,$0E,$19,$00,$00,$00,$00,$00,$00,$00,$00,$01,$00,$01,$21	; BG
+.byte $0E,$1A,$16,$02,$0E,$25,$28,$26,$00,$00,$00,$00,$01,$00,$01,$21	; BG
 .byte $0E,$0F,$1A,$38,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00	; Sprite
+jumping'data:
+.byte $E8,$E0,$0C,$F4,$18,$F4,$20,$0C	; dx values for jumping and otherwise
+; used as lookup table in input subroutine
+;.byte $E8,$E0,$F4,$F4,$18,$0C,$20,$0C	; this table is closer to the remake's jumping physics
+;(normal value),(value when left is pressed during a jump),(value when right is pressed during a jump),(value when l/r during a neutral jump)
+
+; sequences of bytes that the rle decoder can use
+generators:
+
+; rle sequences
+bg:
+.byte $FE,$01,$01,$C8,$01,$04,$03,$04,$01,$0A,$03,$0E,$01,$12,$05,$0E,$01,$07,$01,$0A,$01,$0F,$11,$01,$02,$01,$09,$0E,$01,$07,$01,$0A,$01,$0F,$11,$01,$02,$01,$09,$0E,$01,$07,$01,$0A,$01,$0F,$11,$01,$04,$03,$04,$01,$04,$03,$01,$04,$01,$07,$01,$0A,$01,$0F,$11,$01,$0C,$05,$01,$04,$01,$07,$01,$0A,$01,$0F,$11,$01,$07,$10,$01,$07,$01,$0A,$01,$0F,$11,$01,$07,$01,$0A,$01,$03,$0A,$03,$04,$01,$02,$03,$0F,$11,$03,$0C,$03,$20,$05
+
 
 .advance $FFFA
 .word vblank, reset, irq
