@@ -2,52 +2,59 @@
 
 .alias        sprite	$200
 .alias        jump      $D8
-.alias        ground    $D0
+.alias        ground    $B4
 .alias		  maxjump	$40
 .alias		  gravity 	$01
 
-.alias		  lemezaLstatic	$00
-.alias		  lemezaRstatic	$02
+.alias		  lemezaLstatic	$02
+.alias		  lemezaRstatic	$04
 
-.alias		  lemezaLanim0	$04	; inc inc = 12 cycles (since page 2) lda #06 sta $0201 = 6 cycles
-.alias		  lemezaLanim1	$06
-.alias		  lemezaRanim0	$08
-.alias		  lemezaRanim1	$0A
+.alias		  lemezaLanim0	$06	; inc inc = 12 cycles (since page 2) lda #06 sta $0201 = 6 cycles
+.alias		  lemezaLanim1	$08
+.alias		  lemezaRanim0	$0A
+.alias		  lemezaRanim1	$0C
 
-.alias		  lemezaLjump	$0C
-.alias		  lemezaRjump	$0E
+.alias		  lemezaLjump	$0E
+.alias		  lemezaRjump	$10
 
-.alias		  lemezaLfall	$10
-.alias		  lemezaRfall	$12
+.alias		  lemezaLfall	$12
+.alias		  lemezaRfall	$14
 
-.alias		  jumptime'beg  $05			; jumptime is set to this value at the beginning of a jump
-.alias		  jumptime'thresh $04		; jumptime can be this value or greater and still accept input
+.alias		  jumptime'beg  $05			; frame delay between initiating and executing a jump
 
 .segment zp
 .org $0000
 
-;$00: data
-.space freq 1
+;$00: button data
+.space a 1 			; debounce for a
+.space b 1 			; debounce for b
+.space up 1 		; debounce for up
+.space holdlr 1 	; debounce for l/r
 
-;$01: button data
-.space a 1	; debounce for a
-.space b 1	; debounce for b
-.space up 1 ; debounce for up
-.space holdlr 1 ; debounce for l/r
-
-;$05: movement
-.space sx 1	;	subpixel horizontal positioning
-.space dx 1 ;	horizontal movement
-.space sy 1	;	subpixel vertical positioning
-.space dy 1 ;	vertical movement
-.space acc 1 ;	i know gravity ain't an excuse
+;$04: movement
+.space sx 1 	; subpixel horizontal positioning
+.space dx 1 	; horizontal movement
+.space sy 1 	; subpixel vertical positioning
+.space dy 1 	; vertical movement
+.space acc 1 	; i know gravity ain't an excuse
 .space jumplock 1
 .space jumptime 1
 
-;$0B: constants and clocks
+;$0B: hi and lo temp memory
+.space tmp'hi 1
+.space tmp'lo 1
+.space tmp'constant 1  ; constant for subroutines using bit/X,Y for looping
+.space tmp'var 1	   ; same but different a 'variable'
+
+;$0F: simple field memory
+.space field'hi 1
+.space field'lo 1
+.space field'offset 1
+
+;$12: constants and clocks
 .space facing 1 ; LSB: direction facing (0 = right, 1 = left)
 				; upper: lemeza animation count
-.space subpx 1  ; constant 8
+
 
 ; If we had a normal data segment, it would have an .org $0300, so
 ; that it doesn't stomp on our sprite data.
@@ -90,8 +97,11 @@ reset:
 		sta $2001
 
 		jsr init'sprites
+		jsr load'name'tables
+		jsr load'palette
 		jsr init'sound
 
+		lda $2002
 		lda #%10111000
 		sta $2000
 		lda #%00011110
@@ -104,7 +114,7 @@ loop:
 		jmp loop
 
 init'sprites:
-		; Clear page #2, which we'll use to hold sprite data
+		; clear page 2 for DMA
 		lda #$00
 		ldx #$00
 *		sta sprite, x
@@ -114,18 +124,28 @@ init'sprites:
 		; initialize Sprite 0
 		lda #ground
 		sta sprite          ; Y coordinate
-		sta sprite+4        ; Y coordinate
+		sta sprite+4
 
 		stx sprite+3        ; X coordinate
 		lda #$08
-		sta sprite+7        ; X coordinate
+		sta sprite+7
 		lda #lemezaLstatic
 		sta sprite+1        ; Pattern number
 		lda #lemezaRstatic
 		sta sprite+5
+		rts
 
-		lda #8
-		sta subpx
+load'name'tables:
+		lda #<bg
+		sta tmp'hi
+		lda #>bg
+		sta tmp'lo
+		lda #$27
+		sta $2006
+		lda #$7E
+		sta $2006
+		jsr nametable'rle'decode
+		rts
 
 load'palette:
 		lda #$3F
@@ -138,6 +158,70 @@ load'palette:
 		cpx #$20
 		bne -
 		rts
+
+; subroutine for loading the name table with a RLE sequence
+;  (from address in tmp'hi/lo)
+; run lengths have an LSB of 0 (and hence only take even values
+; data has an LSB of 1, the next 5 bits are a number, setting bit 6 indicates
+; 	whether or not to add the current field number(*32) as an offset, and
+;   setting bit 7 indicates that the number is a generator rather than a sprite
+
+nametable'rle'decode:
+		ldy #0
+rle'decode'loop:
+		lda (tmp'hi),y
+		beq rle'decode'done	; flag all 0's with done
+		iny
+		tax
+		and #1
+		beq rle'load'data
+		stx a			; fortunately, generic name a works for temp vars
+		ldx #1
+		jmp rle'length'done
+rle'load'data:
+		lda (tmp'hi),y
+		iny
+		sta a
+rle'length'done:
+		jsr rle'decode'data
+*		sta $2007
+		dex
+		bne -
+		jmp rle'decode'loop
+rle'decode'done:
+		rts
+		
+		
+rle'decode'data:
+		lda a
+		bit a
+		php				; push state: V contains offset, N contains isgenerator
+		lsr
+		and #%00011111	; only the lower 5 bits matter
+		plp				; generator?
+		bmi rle'decode'generator
+		bvc write'tile
+		adc field'offset
+write'tile:
+		rts
+
+rle'decode'generator:
+		stx b
+		ldx #0
+		stx tmp'constant
+		plp				; field offset flag
+		bvc generator'write
+		ldx field'offset
+		stx tmp'constant
+generator'write:
+		ldx #4
+*		lda generators,x
+		adc tmp'constant
+		sta $2007
+		dex
+		bne -
+		ldx b
+		jmp rle'decode'loop
 
 init'sound:
 		; initialize sound hardware
@@ -154,14 +238,14 @@ init'sound:
 
 do'input:
 		ldx #0
-		lda #$01        ; strobe joypad
+		lda #1 			; strobe joypad
 		sta $4016
 		stx $4016
 
-		lda $4016        ; A button
+		lda $4016       ; A button
 		and #1
 		beq not'a
-		eor a			 ; debounce with last known value
+		eor a			; debounce with last known value
 		beq do'b
 		sta a
 
@@ -212,7 +296,8 @@ rel'up:
 		beq not'up
 		lda dy
 		bpl not'up		 ; only when going up
-		stx dy
+		lda #$FD
+		sta dy
 not'up:
 		stx up
 do'down:
@@ -310,6 +395,8 @@ nolr'jump:
 ;		with a fixed point at the fourth bit
 ;	returns (in A) offset to 'higher' bits (like those stored in a sprite)
 subpixel'manage:
+		ldy #8
+		sty tmp'constant
 		clc
 		adc $00,X
 		pha
@@ -325,7 +412,7 @@ lower'bits:
 		lsr
 		lsr
 		lsr
-		bit subpx
+		bit tmp'constant
 		beq not'neg
 		clc
 		ora	#%11110000
@@ -408,8 +495,8 @@ falling'spr:
 		sta sprite+5
 		jmp try'reflect
 
-do'anim:
-		lda dx			; only use animated if moving
+do'anim:				; only use animated if moving
+		lda dx
 		beq try'reflect
 		lda jumplock
 		bne try'reflect
@@ -458,14 +545,14 @@ no'lag'compensate:
 play'square:
 		lda #$84		 ; decaying envelope
 		sta $4000
-		lda freq		 ; period in here
+		lda #0			 ; period in here
 		sta $4002
 		lda #$09		 ; length and period high
 		sta $4003
 		rts
 
 play'tri:
-		lda freq
+		lda #0
 		sta $400A
 		lda #$09
 		sta $400B
@@ -480,13 +567,21 @@ irq:
 		rti
 
 palette:
-.byte $0E,$00,$0E,$19,$00,$00,$00,$00,$00,$00,$00,$00,$01,$00,$01,$21	; BG
+.byte $0E,$1A,$16,$02,$0E,$25,$28,$26,$00,$00,$00,$00,$01,$00,$01,$21	; BG
 .byte $0E,$0F,$1A,$38,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00	; Sprite
 jumping'data:
 .byte $E8,$E0,$0C,$F4,$18,$F4,$20,$0C	; dx values for jumping and otherwise
 ; used as lookup table in input subroutine
 ;.byte $E8,$E0,$F4,$F4,$18,$0C,$20,$0C	; this table is closer to the remake's jumping physics
 ;(normal value),(value when left is pressed during a jump),(value when right is pressed during a jump),(value when l/r during a neutral jump)
+
+; sequences of bytes that the rle decoder can use
+generators:
+
+; rle sequences
+bg:
+.byte $FE,$01,$01,$C8,$01,$04,$03,$04,$01,$0A,$03,$0E,$01,$12,$05,$0E,$01,$07,$01,$0A,$01,$0F,$11,$01,$02,$01,$09,$0E,$01,$07,$01,$0A,$01,$0F,$11,$01,$02,$01,$09,$0E,$01,$07,$01,$0A,$01,$0F,$11,$01,$04,$03,$04,$01,$04,$03,$01,$04,$01,$07,$01,$0A,$01,$0F,$11,$01,$0C,$05,$01,$04,$01,$07,$01,$0A,$01,$0F,$11,$01,$07,$10,$01,$07,$01,$0A,$01,$0F,$11,$01,$07,$01,$0A,$01,$03,$0A,$03,$04,$01,$02,$03,$0F,$11,$03,$0C,$03,$20,$05
+
 
 .advance $FFFA
 .word vblank, reset, irq
