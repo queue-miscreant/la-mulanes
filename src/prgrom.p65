@@ -25,13 +25,19 @@
 .segment zp
 .org $0000
 
-;$00: button data
+;$00: hi and lo temp memory
+.space tmp'hi 1
+.space tmp'lo 1
+.space tmp'constant 1  ; constant for subroutines using bit/X,Y for looping
+.space tmp'var 1	   ; same but different a 'variable'
+
+;$04: button data
 .space a 1 			; debounce for a
 .space b 1 			; debounce for b
 .space up 1 		; debounce for up
 .space holdlr 1 	; debounce for l/r
 
-;$04: movement
+;$08: movement
 .space sx 1 	; subpixel horizontal positioning
 .space dx 1 	; horizontal movement
 .space sy 1 	; subpixel vertical positioning
@@ -40,15 +46,11 @@
 .space jumplock 1
 .space jumptime 1
 
-;$0B: hi and lo temp memory
-.space tmp'hi 1
-.space tmp'lo 1
-.space tmp'constant 1  ; constant for subroutines using bit/X,Y for looping
-.space tmp'var 1	   ; same but different a 'variable'
-
 ;$0F: simple field memory
 .space field'hi 1
 .space field'lo 1
+.space gen'hi 1
+.space gen'lo 1
 .space field'offset 1
 
 ;$12: constants and clocks
@@ -136,6 +138,10 @@ init'sprites:
 		rts
 
 load'name'tables:
+		lda #<generators
+		sta gen'hi
+		lda #>generators
+		sta gen'lo
 		lda #<bg
 		sta tmp'hi
 		lda #>bg
@@ -190,8 +196,7 @@ rle'length'done:
 		jmp rle'decode'loop
 rle'decode'done:
 		rts
-		
-		
+
 rle'decode'data:
 		lda a
 		bit a
@@ -206,21 +211,24 @@ write'tile:
 		rts
 
 rle'decode'generator:
-		stx b
-		ldx #0
-		stx tmp'constant
-		plp				; field offset flag
-		bvc generator'write
-		ldx field'offset
-		stx tmp'constant
+		stx b 			; store the registers
+		sty tmp'var
+		tay
+		lda #0
+		bvc generator'write ; fortunately, no V mods occur due to above
+		lda field'offset
 generator'write:
+		clc
+		adc (gen'hi),y
 		ldx #4
-*		lda generators,x
-		adc tmp'constant
-		sta $2007
+*		sta $2007
+		adc #1
 		dex
 		bne -
 		ldx b
+		ldy tmp'var
+		pla
+		pla
 		jmp rle'decode'loop
 
 init'sound:
@@ -575,12 +583,13 @@ jumping'data:
 ;.byte $E8,$E0,$F4,$F4,$18,$0C,$20,$0C	; this table is closer to the remake's jumping physics
 ;(normal value),(value when left is pressed during a jump),(value when right is pressed during a jump),(value when l/r during a neutral jump)
 
-; sequences of bytes that the rle decoder can use
+; contiguous drawing ROM that the rle decoder can use
 generators:
+.byte $09,$0D,$11
 
 ; rle sequences
 bg:
-.byte $FE,$01,$01,$C8,$01,$04,$03,$04,$01,$0A,$03,$0E,$01,$12,$05,$0E,$01,$07,$01,$0A,$01,$0F,$11,$01,$02,$01,$09,$0E,$01,$07,$01,$0A,$01,$0F,$11,$01,$02,$01,$09,$0E,$01,$07,$01,$0A,$01,$0F,$11,$01,$04,$03,$04,$01,$04,$03,$01,$04,$01,$07,$01,$0A,$01,$0F,$11,$01,$0C,$05,$01,$04,$01,$07,$01,$0A,$01,$0F,$11,$01,$07,$10,$01,$07,$01,$0A,$01,$0F,$11,$01,$07,$01,$0A,$01,$03,$0A,$03,$04,$01,$02,$03,$0F,$11,$03,$0C,$03,$20,$05
+.byte $FE,$01,$8C,$01,$01,$81,$1C,$01,$83,$18,$01,$04,$03,$85,$0A,$03,$0E,$01,$12,$05,$0E,$01,$07,$0A,$01,$01,$0F,$11,$02,$01,$01,$09,$01,$81,$08,$01,$01,$07,$0A,$01,$01,$0F,$11,$02,$01,$01,$09,$01,$83,$08,$01,$01,$07,$0A,$01,$01,$0F,$11,$01,$04,$03,$85,$04,$03,$04,$01,$01,$07,$0A,$01,$01,$0F,$11,$01,$0C,$05,$04,$01,$01,$07,$04,$01,$01,$81,$02,$01,$0F,$11,$01,$07,$10,$01,$07,$04,$01,$01,$83,$02,$01,$0F,$11,$01,$07,$0A,$01,$01,$0A,$03,$03,$85,$02,$03,$0F,$11,$0C,$03,$03,$20,$05
 
 
 .advance $FFFA
